@@ -28,8 +28,22 @@ parser.add_argument('--stage', action='store', dest='stage', type=int, default=3
                     help='Stage (0 - Warm-Up, 1 - Qualifying, 2 - Race, 3 - Unknown)')
 
 arguments = parser.parse_args()
-car_name = "c" or input("Enter car name: ").strip()
-track_name = "c" or input("Enter track name: ").strip()
+
+# Take track name and car name as input when the game starts
+track_name = input("Enter track name: ").strip()
+car_name = input("Enter car name: ").strip()
+
+# Create the CSV filename based on the track and car name
+csv_filename = f"{track_name}_{car_name}.csv"
+
+# Ensure headers are consistent
+csv_headers = None
+
+if not os.path.exists(csv_filename):
+    # If the file doesn't exist, create it and write the headers
+    with open(csv_filename, mode="w", newline="") as f:
+        csv_headers = None  # Reset headers to ensure they are written later
+
 # Print summary
 print('Connecting to server host ip:', arguments.host_ip, '@ port:', arguments.host_port)
 print('Bot ID:', arguments.id)
@@ -54,23 +68,24 @@ verbose = True
 
 d = driver.Driver(arguments.stage)
 
-# CSV File Setup
-csv_filename = "torcs_data.csv"
-csv_headers = None  # Will be determined dynamically
-
 # Function to extract values from data string
 def extract_data(data_string):
     """Parses a data string in the format '(key value)(key value)' into a dictionary."""
     pattern = r'\((\w+) ([^()]+)\)'
     return dict(re.findall(pattern, data_string))
 
-# Check if CSV file exists and read headers if present
-if os.path.exists(csv_filename):
-    with open(csv_filename, mode="r", newline="") as f:
-        reader = csv.reader(f)
-        existing_headers = next(reader, None)
-        if existing_headers:
-            csv_headers = existing_headers
+# Function to update CSV headers dynamically
+def update_csv_headers(new_data, csv_headers, csv_filename):
+    """Update CSV headers if new keys are found in the data."""
+    new_keys = set(new_data.keys()) - set(csv_headers)
+    if new_keys:
+        csv_headers.extend(new_keys)  # Add new keys to the headers
+        # Rewrite the CSV file with updated headers
+        with open(csv_filename, mode="w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=csv_headers)
+            writer.writeheader()
+            print(f"CSV headers updated: {csv_headers}")
+    return csv_headers
 
 while not shutdownClient:
     while True:
@@ -88,7 +103,7 @@ while not shutdownClient:
             print("didn't get response from server...")
     
         if buf.find('***identified***') >= 0:
-            print('Received: ', buf)
+            print('Received response: ', buf)
             break
 
     currentStep = 0
@@ -101,8 +116,8 @@ while not shutdownClient:
         except socket.error:
             print("didn't get response from server...")
 
-        # if verbose and buf:
-        #     print('Received: ', buf)
+        if verbose and buf:
+            print('Received: ', buf)
 
         # Handle shutdown or restart
         if buf and '***shutdown***' in buf:
@@ -145,28 +160,44 @@ while not shutdownClient:
                 if rpm_str != '-':
                     rpm = float(rpm_str)
                 
-                # Only log if car is moving (speed > 0.1) or engine is running (rpm > 500)
-                if abs(speed) > 0.1 or rpm > 500:
-                    # Ensure "Track" column is included
-                    received_data["Track"] = arguments.track
+                # Only log if car is moving (speed > 0.1) or engine is running (rpm > 100)
+                if abs(speed) > 0.1 or rpm > 100:
+                    # Expand multi-value fields into separate columns
+                    def expand_multi_values(data, key_prefix):
+                        """Expand multi-value fields into separate columns."""
+                        expanded = {}
+                        if key_prefix in data:
+                            values = data[key_prefix].split()
+                            for i, value in enumerate(values):
+                                expanded[f"{key_prefix}_{i}"] = value
+                            del data[key_prefix]  # Remove the original multi-value field
+                        return expanded
 
-                    combined_data = {"Car": car_name, "track": track_name, **received_data, **sending_data}  # Merge both dictionaries
-                    
-                    # Ensure headers are consistent
+                    # Expand multi-value fields
+                    received_data.update(expand_multi_values(received_data, "opponents"))
+                    received_data.update(expand_multi_values(received_data, "track"))
+                    received_data.update(expand_multi_values(received_data, "focus"))
+                    received_data.update(expand_multi_values(received_data, "wheelSpinVel"))
+
+                    # Merge received and sending data
+                    combined_data = {**received_data, **sending_data}
+
+                    # Update CSV headers dynamically
                     if csv_headers is None:
-                        csv_headers = ["Track"] + sorted(set(combined_data.keys()))  # Sort keys for consistency
+                        csv_headers = sorted(combined_data.keys())  # Initialize headers
                         with open(csv_filename, mode="w", newline="") as f:
                             writer = csv.DictWriter(f, fieldnames=csv_headers)
                             writer.writeheader()
-                    
+                    else:
+                        csv_headers = update_csv_headers(combined_data, csv_headers, csv_filename)
+
                     # Append data row
                     with open(csv_filename, mode="a", newline="") as f:
                         writer = csv.DictWriter(f, fieldnames=csv_headers)
                         writer.writerow(combined_data)
+
             except (ValueError, IndexError) as e:
-                if verbose:
-                    print(f"Error processing data: {e}")
-                continue
+                print(f"Error processing data: {e}")
 
         if buf:
             try:

@@ -7,23 +7,22 @@ import math
 
 class Driver(object):
     '''
-    A driver for TORCS that supports both manual keyboard control and neural network control
+    A keyboard-controlled driver for TORCS with gradual controls and proper state management
     '''
 
-    def __init__(self, stage, neural_mode=False):
+    def __init__(self, stage):
         '''Constructor'''
         self.stage = stage
-        self.neural_mode = neural_mode
         
         self.parser = msgParser.MsgParser()
         self.state = carState.CarState()
         self.control = carControl.CarControl()
         
-        # Control change rates (only used in manual mode)
-        self.accel_rate = 0.05 if not neural_mode else None
-        self.brake_rate = 0.1 if not neural_mode else None
-        self.steer_rate = 0.005 if not neural_mode else None
-        self.steer_center_rate = 0.02 if not neural_mode else None
+        # Control change rates (adjust these values for desired sensitivity)
+        self.accel_rate = 0.05 
+        self.brake_rate = 0.1
+        self.steer_rate = 0.005  # Reduced from 0.01 for less sensitive steering
+        self.steer_center_rate = 0.02  # Reduced from 0.05 for smoother centering
 
         # Current control states
         self.current_accel = 0.0
@@ -34,16 +33,13 @@ class Driver(object):
         self.max_speed = 100
         self.prev_rpm = None
         
-        # Only initialize keyboard controls in manual mode
-        if not neural_mode:
-            self.input_keys = {"w": False, "s": False, "a": False, "d": False}
-            self.manual_gear = 1
-            # Start listening for keyboard input in a separate thread
-            listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-            listener.start()
-        else:
-            self.input_keys = None
-            self.manual_gear = None
+        self.input_keys = {"w": False, "s": False, "a": False, "d": False}
+        self.manual_gear = 1
+       
+
+        # Start listening for keyboard input in a separate thread
+        listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        listener.start()
 
     def init(self):
         '''Return init string with rangefinder angles'''
@@ -64,7 +60,7 @@ class Driver(object):
         return self.parser.stringify({'init': self.angles})
     
     def drive(self, msg):
-        '''Receive telemetry, apply controls, and return control commands'''
+        '''Receive telemetry, apply user input, and return control commands'''
         # Update car state from message
         self.state.setFromMsg(msg)
         
@@ -74,23 +70,14 @@ class Driver(object):
         track_pos = self.state.getTrackPos()
         track_sensors = self.state.getTrack()
         
-        if self.neural_mode:
-            # TODO: Get predictions from neural network
-            # For now, just pass through the current state
-            self.current_accel = 0.0
-            self.current_brake = 0.0
-            self.current_steer = 0.0
-            gear = 1
-        else:
-            # Apply user inputs to controls gradually
-            self.update_controls(speed, rpm, track_pos, track_sensors)
-            gear = self.manual_gear
+        # Apply user inputs to controls gradually
+        self.update_controls(speed, rpm, track_pos, track_sensors)
 
         # Update control values
         self.control.setAccel(self.current_accel)
         self.control.setBrake(self.current_brake)
         self.control.setSteer(self.current_steer)
-        self.control.setGear(gear)
+        self.control.setGear(self.manual_gear)
         
         # Add clutch control for smoother gear changes
         if self.prev_rpm is not None and abs(rpm - self.prev_rpm) > 1000:
@@ -105,9 +92,7 @@ class Driver(object):
 
     def update_controls(self, speed, rpm, track_pos, track_sensors):
         '''Updates car controls gradually based on keyboard input and car state'''
-        if self.neural_mode:
-            return
-            
+        
         # --- Acceleration and Braking ---
         if self.input_keys["w"]:
             # Reduce braking force quickly
@@ -154,9 +139,6 @@ class Driver(object):
 
     def on_press(self, key):
         '''Handle key press events'''
-        if self.neural_mode:
-            return
-            
         try:
             k = key.char.lower()
             if k in self.input_keys:
@@ -174,9 +156,6 @@ class Driver(object):
 
     def on_release(self, key):
         '''Handle key release events'''
-        if self.neural_mode:
-            return
-            
         try:
             k = key.char.lower()
             if k in self.input_keys:
@@ -195,66 +174,5 @@ class Driver(object):
         self.current_accel = 0.0
         self.current_brake = 0.0
         self.current_steer = 0.0
-        if not self.neural_mode:
-            self.manual_gear = 1
-        self.prev_rpm = None
-
-class NeuralDriver(Driver):
-    '''
-    A neural network-controlled driver for TORCS
-    '''
-    def __init__(self, stage):
-        super().__init__(stage, neural_mode=True)
-        # Remove gradual control rates as they're not needed for neural network
-        self.accel_rate = None
-        self.brake_rate = None
-        self.steer_rate = None
-        self.steer_center_rate = None
-        
-        # Remove keyboard input handling
-        self.input_keys = None
-        self.manual_gear = None
-
-    def drive(self, msg):
-        '''Receive telemetry, get neural network predictions, and return control commands'''
-        # Update car state from message
-        self.state.setFromMsg(msg)
-        
-        # Get current state values
-        speed = self.state.getSpeedX()
-        rpm = self.state.getRpm()
-        track_pos = self.state.getTrackPos()
-        track_sensors = self.state.getTrack()
-        
-        # TODO: Get predictions from neural network
-        # For now, just pass through the current state
-        accel = 0.0
-        brake = 0.0
-        steer = 0.0
-        gear = 1
-        
-        # Update control values directly
-        self.control.setAccel(accel)
-        self.control.setBrake(brake)
-        self.control.setSteer(steer)
-        self.control.setGear(gear)
-        
-        # Add clutch control for smoother gear changes
-        if self.prev_rpm is not None and abs(rpm - self.prev_rpm) > 1000:
-            self.control.setClutch(0.5)  # Engage clutch during rapid RPM changes
-        else:
-            self.control.setClutch(0.0)
-        
-        self.prev_rpm = rpm
-
-        # Return the control message string
-        return self.control.toMsg()
-
-    def onShutDown(self):
-        '''Called when TORCS sends a shutdown message'''
-        print('Neural Driver Shutdown')
-    
-    def onRestart(self):
-        '''Called when TORCS sends a restart message'''
-        print('Neural Driver Restart')
+        self.manual_gear = 1
         self.prev_rpm = None
