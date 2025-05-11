@@ -1,7 +1,7 @@
 import sys
 import argparse
 import socket
-import driver
+import autoDriver
 import csv
 import os
 import re
@@ -30,19 +30,19 @@ parser.add_argument('--stage', action='store', dest='stage', type=int, default=3
 arguments = parser.parse_args()
 
 # Take track name and car name as input when the game starts
-track_name = input("Enter track name: ").strip()
-car_name = input("Enter car name: ").strip()
+# track_name = input("Enter track name: ").strip()
+# car_name = input("Enter car name: ").strip()
 
-# Create the CSV filename based on the track and car name
-csv_filename = f"{track_name}_{car_name}.csv"
+# # Create the CSV filename based on the track and car name
+# csv_filename = f"{track_name}_{car_name}.csv"
 
-# Ensure headers are consistent
-csv_headers = None
+# # Ensure headers are consistent
+# csv_headers = None
 
-if not os.path.exists(csv_filename):
-    # If the file doesn't exist, create it and write the headers
-    with open(csv_filename, mode="w", newline="") as f:
-        csv_headers = None  # Reset headers to ensure they are written later
+# if not os.path.exists(csv_filename):
+#     # If the file doesn't exist, create it and write the headers
+#     with open(csv_filename, mode="w", newline="") as f:
+#         csv_headers = None  # Reset headers to ensure they are written later
 
 # Print summary
 print('Connecting to server host ip:', arguments.host_ip, '@ port:', arguments.host_port)
@@ -66,7 +66,8 @@ curEpisode = 0
 
 verbose = True
 
-d = driver.Driver(arguments.stage)
+# Initialize the autoDriver instead of manual driver
+d = autoDriver.autoDriver(arguments.stage)
 
 # Function to extract values from data string
 def extract_data(data_string):
@@ -103,7 +104,7 @@ while not shutdownClient:
             print("didn't get response from server...")
     
         if buf.find('***identified***') >= 0:
-            print('Received response: ', buf)
+            # print('Received response: ', buf)
             break
 
     currentStep = 0
@@ -116,8 +117,8 @@ while not shutdownClient:
         except socket.error:
             print("didn't get response from server...")
 
-        if verbose and buf:
-            print('Received: ', buf)
+        # if verbose and buf:
+        #     print('Received: ', buf)
 
         # Handle shutdown or restart
         if buf and '***shutdown***' in buf:
@@ -133,7 +134,7 @@ while not shutdownClient:
 
         # Process Received Data
         received_data = extract_data(buf) if buf else {}
-
+        # print(buf)
         currentStep += 1
         if currentStep != arguments.max_steps:
             if buf:
@@ -143,7 +144,7 @@ while not shutdownClient:
 
         # Process Sending Data
         sending_data = extract_data(buf) if buf else {}
-
+        
         # Only log data if car is connected and moving
         if received_data and sending_data:
             try:
@@ -161,46 +162,47 @@ while not shutdownClient:
                     rpm = float(rpm_str)
                 
                 # Only log if car is moving (speed > 0.1) or engine is running (rpm > 100)
-                if abs(speed) > 0.1 or rpm > 100:
+                # if abs(speed) > 0.1 or rpm > 100:
                     # Expand multi-value fields into separate columns
-                    def expand_multi_values(data, key_prefix):
-                        """Expand multi-value fields into separate columns."""
-                        expanded = {}
-                        if key_prefix in data:
-                            values = data[key_prefix].split()
-                            for i, value in enumerate(values):
-                                expanded[f"{key_prefix}_{i}"] = value
-                            del data[key_prefix]  # Remove the original multi-value field
-                        return expanded
+                    # def expand_multi_values(data, key_prefix):
+                    #     """Expand multi-value fields into separate columns."""
+                    #     expanded = {}
+                    #     if key_prefix in data:
+                    #         values = data[key_prefix].split()
+                    #         for i, value in enumerate(values):
+                    #             expanded[f"{key_prefix}_{i}"] = value
+                    #         del data[key_prefix]  # Remove the original multi-value field
+                    #     return expanded
 
-                    # Expand multi-value fields
-                    received_data.update(expand_multi_values(received_data, "opponents"))
-                    received_data.update(expand_multi_values(received_data, "track"))
-                    received_data.update(expand_multi_values(received_data, "focus"))
-                    received_data.update(expand_multi_values(received_data, "wheelSpinVel"))
+                    # # Expand multi-value fields
+                    # received_data.update(expand_multi_values(received_data, "opponents"))
+                    # received_data.update(expand_multi_values(received_data, "track"))
+                    # received_data.update(expand_multi_values(received_data, "focus"))
+                    # received_data.update(expand_multi_values(received_data, "wheelSpinVel"))
 
-                    # Merge received and sending data
-                    combined_data = {**received_data, **sending_data}
+                    # # Merge received and sending data
+                    # combined_data = {**received_data, **sending_data}
 
-                    # Update CSV headers dynamically
-                    if csv_headers is None:
-                        csv_headers = sorted(combined_data.keys())  # Initialize headers
-                        with open(csv_filename, mode="w", newline="") as f:
-                            writer = csv.DictWriter(f, fieldnames=csv_headers)
-                            writer.writeheader()
-                    else:
-                        csv_headers = update_csv_headers(combined_data, csv_headers, csv_filename)
+                    # # Update CSV headers dynamically
+                    # if csv_headers is None:
+                    #     csv_headers = sorted(combined_data.keys())  # Initialize headers
+                    #     with open(csv_filename, mode="w", newline="") as f:
+                    #         writer = csv.DictWriter(f, fieldnames=csv_headers)
+                    #         writer.writeheader()
+                    # else:
+                    #     csv_headers = update_csv_headers(combined_data, csv_headers, csv_filename)
 
-                    # Append data row
-                    with open(csv_filename, mode="a", newline="") as f:
-                        writer = csv.DictWriter(f, fieldnames=csv_headers)
-                        writer.writerow(combined_data)
+                    # # Append data row
+                    # with open(csv_filename, mode="a", newline="") as f:
+                    #     writer = csv.DictWriter(f, fieldnames=csv_headers)
+                    #     writer.writerow(combined_data)
 
             except (ValueError, IndexError) as e:
                 print(f"Error processing data: {e}")
 
         if buf:
             try:
+                print(buf)
                 sock.sendto(buf.encode(), (arguments.host_ip, arguments.host_port))
             except socket.error:
                 print("Failed to send data...Exiting...")
